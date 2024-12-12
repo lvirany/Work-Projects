@@ -1,0 +1,87 @@
+import numpy as np
+import pandas as pd
+import cirq
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score
+from ucimlrepo import fetch_ucirepo
+
+# Step 1: Fetch the dataset
+statlog_german_credit_data = fetch_ucirepo(id=144)
+
+# Load dataset features and targets
+X = statlog_german_credit_data.data.features  # Features as DataFrame
+y = statlog_german_credit_data.data.targets   # Targets as Series
+
+# Inspect dataset metadata
+print(statlog_german_credit_data.metadata)
+print(statlog_german_credit_data.variables)
+
+# Step 2: Preprocess the data
+# Normalize the features to [0, 1]
+scaler = MinMaxScaler()
+X_normalized = scaler.fit_transform(X)
+
+# Split into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(X_normalized, y, test_size=0.2, random_state=42)
+
+# Step 3: Define the Quantum Reservoir
+def create_quantum_reservoir(num_qubits, depth):
+    qubits = [cirq.GridQubit(0, i) for i in range(num_qubits)]
+    circuit = cirq.Circuit()
+    for _ in range(depth):
+        for qubit in qubits:
+            circuit.append(cirq.rx(np.random.rand() * 2 * np.pi)(qubit))
+        for i in range(len(qubits) - 1):
+            circuit.append(cirq.CNOT(qubits[i], qubits[i + 1]))
+    return circuit, qubits
+
+# Initialize the quantum reservoir
+num_qubits = X_train.shape[1]  # Number of features as qubits
+reservoir_depth = 3
+quantum_circuit, quantum_qubits = create_quantum_reservoir(num_qubits, reservoir_depth)
+
+# Encode classical data into quantum states
+def encode_classical_data(data, qubits):
+    circuit = cirq.Circuit()
+    for i, value in enumerate(data):
+        circuit.append(cirq.rx(value * np.pi)(qubits[i]))
+    return circuit
+
+# Extract reservoir states
+def extract_reservoir_states(circuit, qubits):
+    simulator = cirq.Simulator()
+    result = simulator.simulate(circuit)
+    state_vector = np.abs(result.final_state_vector)  # Use state amplitudes as reservoir features
+    return state_vector
+
+# Step 4: Process training and testing data through the quantum reservoir
+def process_with_quantum_reservoir(data, quantum_circuit, quantum_qubits):
+    reservoir_features = []
+    for sample in data:
+        encoded_circuit = encode_classical_data(sample, quantum_qubits)
+        full_circuit = quantum_circuit + encoded_circuit
+        reservoir_features.append(extract_reservoir_states(full_circuit, quantum_qubits))
+    return np.array(reservoir_features)
+
+reservoir_features_train = process_with_quantum_reservoir(X_train, quantum_circuit, quantum_qubits)
+reservoir_features_test = process_with_quantum_reservoir(X_test, quantum_circuit, quantum_qubits)
+
+# Step 5: Train a Logistic Regression Model
+clf = LogisticRegression()
+clf.fit(reservoir_features_train, y_train)
+
+# Step 6: Evaluate the Model
+y_pred_train = clf.predict(reservoir_features_train)
+y_pred_test = clf.predict(reservoir_features_test)
+
+train_accuracy = accuracy_score(y_train, y_pred_train)
+test_accuracy = accuracy_score(y_test, y_pred_test)
+
+print(f"Train Accuracy: {train_accuracy * 100:.2f}%")
+print(f"Test Accuracy: {test_accuracy * 100:.2f}%")
+
+# Step 7: Example Predictions
+print(f"Predicted Defaults (Test): {y_pred_test[:10]}")
+print(f"Actual Defaults (Test): {y_test[:10].values}")
